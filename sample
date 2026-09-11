@@ -6,6 +6,19 @@ import csv
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.ticker import MultipleLocator
+
+# --- DARK MODE COLORS ---
+BG_COLOR = "#1e1e1e"
+FG_COLOR = "#e0e0e0"
+ACCENT_COLOR = "#2d2d2d"
+BUTTON_BG = "#3a3a3a"
+BUTTON_ACTIVE_BG = "#505050"
+
+# Update interval for sensor logging, in milliseconds
+UPDATE_INTERVAL_MS = 4000
+
+plt.style.use("dark_background")
 
 
 class ENoseApp:
@@ -15,9 +28,53 @@ class ENoseApp:
         self.root = root
         self.root.title("Mushroom E-Nose")
         self.root.geometry("1000x700")
+        self.root.configure(bg=BG_COLOR)
 
         self.running = False
         self.start_time = time.time()
+        self.after_id = None
+
+        #TTK DARK THEME SETUP
+        style = ttk.Style()
+        style.theme_use("clam")
+
+        style.configure(
+            "TLabel",
+            background=BG_COLOR,
+            foreground=FG_COLOR
+        )
+
+        style.configure(
+            "TFrame",
+            background=BG_COLOR
+        )
+
+        style.configure(
+            "TButton",
+            background=BUTTON_BG,
+            foreground=FG_COLOR,
+            borderwidth=1,
+            focuscolor=BG_COLOR,
+            padding=(20, 14),
+            font=("Arial", 12, "bold")
+        )
+        style.map(
+            "TButton",
+            background=[("active", BUTTON_ACTIVE_BG)],
+            foreground=[("active", FG_COLOR)]
+        )
+
+        style.configure(
+            "TCheckbutton",
+            background=BG_COLOR,
+            foreground=FG_COLOR,
+            focuscolor=BG_COLOR
+        )
+        style.map(
+            "TCheckbutton",
+            background=[("active", BG_COLOR)],
+            foreground=[("active", FG_COLOR)]
+        )
 
         #TITLE
         title_label = ttk.Label(
@@ -28,26 +85,41 @@ class ENoseApp:
         title_label.pack(pady=10)
 
         #MAIN FRAME
-        main_frame = tk.Frame(self.root)
+        main_frame = tk.Frame(self.root, bg=BG_COLOR)
         main_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
         #SENSOR FRAME
-        sensor_frame = tk.Frame(main_frame)
+        sensor_frame = tk.Frame(main_frame, bg=BG_COLOR)
         sensor_frame.pack(fill="x", padx=20, pady=10)
 
         self.sensor_labels = []
+        self.sensor_vars = []
 
         for i in range(4):
+
+            sensor_item_frame = tk.Frame(sensor_frame, bg=BG_COLOR)
+            sensor_item_frame.pack(side="left", padx=30)
+
+            var = tk.BooleanVar(value=True)
+            self.sensor_vars.append(var)
+
+            checkbox = ttk.Checkbutton(
+                sensor_item_frame,
+                variable=var,
+                command=self.redraw_graph
+            )
+            checkbox.pack(side="left")
+
             label = ttk.Label(
-                sensor_frame,
+                sensor_item_frame,
                 text=f"Sensor {i + 1}: ---",
                 font=("Arial", 12)
             )
-            label.pack(side="left", padx=30)
+            label.pack(side="left")
             self.sensor_labels.append(label)
 
         #CLASSIFICATION FRAME
-        classification_frame = tk.Frame(main_frame)
+        classification_frame = tk.Frame(main_frame, bg=BG_COLOR)
         classification_frame.pack(fill="x", padx=20, pady=10)
 
         self.result_label = ttk.Label(
@@ -58,15 +130,19 @@ class ENoseApp:
         self.result_label.pack()
 
         #GRAPH FRAME
-        graph_frame = tk.Frame(main_frame)
+        graph_frame = tk.Frame(main_frame, bg=BG_COLOR)
         graph_frame.pack(fill="both", expand=True, padx=20, pady=10)
 
         self.figure, self.ax = plt.subplots(figsize=(8, 3))
+        self.figure.patch.set_facecolor(BG_COLOR)
+        self.ax.set_facecolor(BG_COLOR)
+        self.figure.subplots_adjust(right=0.78)
 
         self.canvas = FigureCanvasTkAgg(
             self.figure,
             master=graph_frame
         )
+        self.canvas.get_tk_widget().configure(bg=BG_COLOR, highlightthickness=0)
         self.canvas.get_tk_widget().pack(fill="both", expand=True)
 
         #STATUS
@@ -78,26 +154,32 @@ class ENoseApp:
         self.status_label.pack(pady=5)
 
         #BUTTONS
-        button_frame = tk.Frame(self.root)
-        button_frame.pack(pady=5)
+        button_frame = tk.Frame(self.root, bg=BG_COLOR)
+        button_frame.pack(pady=15)
 
         ttk.Button(
             button_frame,
             text="Start",
             command=self.start_test
-        ).pack(side="left", padx=5)
+        ).pack(side="left", padx=15)
 
         ttk.Button(
             button_frame,
             text="Stop",
             command=self.stop_test
-        ).pack(side="left", padx=5)
+        ).pack(side="left", padx=15)
 
         ttk.Button(
             button_frame,
             text="Save Data",
             command=self.save_data
-        ).pack(side="left", padx=5)
+        ).pack(side="left", padx=15)
+
+        ttk.Button(
+            button_frame,
+            text="Reset",
+            command=self.reset_graph
+        ).pack(side="left", padx=15)
 
         #GRAPH DATA
         self.time_data = []
@@ -105,6 +187,10 @@ class ENoseApp:
 
     #START
     def start_test(self):
+
+        if self.after_id is not None:
+            self.root.after_cancel(self.after_id)
+            self.after_id = None
 
         self.running = True
         self.start_time = time.time()
@@ -123,6 +209,10 @@ class ENoseApp:
     def stop_test(self):
 
         self.running = False
+
+        if self.after_id is not None:
+            self.root.after_cancel(self.after_id)
+            self.after_id = None
 
         self.status_label.config(
             text="Status: Test Stopped"
@@ -154,22 +244,65 @@ class ENoseApp:
             )
 
         #UPDATE GRAPH
+        self.redraw_graph()
+
+        self.after_id = self.root.after(UPDATE_INTERVAL_MS, self.update_data)
+
+    #REDRAW
+    def redraw_graph(self):
+
         self.ax.clear()
-        self.ax.set_title("Sensor Data Over Time")
-        self.ax.set_xlabel("Time (s)")
-        self.ax.set_ylabel("Sensor Values")
+        self.ax.set_facecolor(BG_COLOR)
+        self.ax.set_title("Sensor Data Over Time", color=FG_COLOR)
+        self.ax.set_xlabel("Time (s)", color=FG_COLOR)
+        self.ax.set_ylabel("Sensor Values", color=FG_COLOR)
+        self.ax.tick_params(colors=FG_COLOR)
+        self.ax.xaxis.set_major_locator(MultipleLocator(4))
+
+        for spine in self.ax.spines.values():
+            spine.set_color(FG_COLOR)
 
         for i in range(4):
-            self.ax.plot(
-                self.time_data,
-                self.sensor_data[i],
-                label=f"Sensor {i + 1}"
-            )
+            if self.sensor_vars[i].get():
+                self.ax.plot(
+                    self.time_data,
+                    self.sensor_data[i],
+                    label=f"Sensor {i + 1}",
+                    marker="o",
+                    markersize=5
+                )
 
-        self.ax.legend()
+        if any(var.get() for var in self.sensor_vars):
+            legend = self.ax.legend(
+                loc="upper left",
+                bbox_to_anchor=(1.02, 1),
+                borderaxespad=0
+            )
+            legend.get_frame().set_facecolor(ACCENT_COLOR)
+            for text in legend.get_texts():
+                text.set_color(FG_COLOR)
+
         self.canvas.draw()
 
-        self.root.after(1000, self.update_data)
+    #RESET
+    def reset_graph(self):
+
+        self.running = False
+
+        if self.after_id is not None:
+            self.root.after_cancel(self.after_id)
+            self.after_id = None
+
+        self.time_data = []
+        self.sensor_data = [[], [], [], []]
+
+        for i, label in enumerate(self.sensor_labels):
+            label.config(text=f"Sensor {i + 1}: ---")
+
+        self.result_label.config(text="WAITING")
+        self.status_label.config(text="Status: Stopped")
+
+        self.redraw_graph()
 
     #SAVE
     def save_data(self):
